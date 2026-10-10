@@ -6,6 +6,8 @@
   "scripts": {
     "start": "ts-node src/server.ts",
     "dev": "nodemon src/server.ts",
+    "test:priority": "ts-node src/test-priority.ts",
+    "test:cost": "ts-node src/tests/cost-aware-scheduler.test.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

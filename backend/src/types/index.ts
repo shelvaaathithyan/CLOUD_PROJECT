@@ -22,6 +22,25 @@ export interface CloudTask {
   waitingTimeBonus: number;
   waitReason?: string;
   allocations?: any; // To store resource IDs assigned
+  estimatedCostUsd?: number;
+  cpuCostUsd?: number;
+  gpuCostUsd?: number;
+  ramCostUsd?: number;
+  storageCostUsd?: number;
+  costBreakdown?: {
+    cpuCost: number;
+    gpuCost: number;
+    ramCost: number;
+    storageCost: number;
+    cpuCostUsd?: number;
+    gpuCostUsd?: number;
+    ramCostUsd?: number;
+    storageCostUsd?: number;
+    total: number;
+  };
+  costPenalty?: number;
+  effectiveScore?: number;
+  schedulingExplanation?: string;
 }
 
 export interface ResourceState {

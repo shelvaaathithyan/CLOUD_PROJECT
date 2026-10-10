@@ -34,6 +34,33 @@ export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export type TaskStatus = 'WAITING' | 'READY' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
+export interface TaskCostBreakdown {
+  cpuCost: number;
+  gpuCost: number;
+  ramCost: number;
+  storageCost: number;
+  cpuCostUsd?: number;
+  gpuCostUsd?: number;
+  ramCostUsd?: number;
+  storageCostUsd?: number;
+  total: number;
+}
+
+export interface CostMetrics {
+  totalEstimatedSubmittedCost: number;
+  totalEstimatedCompletedCost: number;
+  averageCostPerCompletedTask: number;
+  costByType: {
+    CPU: number;
+    GPU: number;
+    MIXED: number;
+  };
+  submittedCount: number;
+  completedCount: number;
+  currency: string;
+  isSimulation: boolean;
+}
+
 export interface CloudTask {
   requestId: string;
   taskName: string;
@@ -54,4 +81,13 @@ export interface CloudTask {
   waitingTimeBonus: number;
   waitReason?: string;
   allocations?: any;
+  estimatedCostUsd?: number;
+  cpuCostUsd?: number;
+  gpuCostUsd?: number;
+  ramCostUsd?: number;
+  storageCostUsd?: number;
+  costBreakdown?: TaskCostBreakdown;
+  costPenalty?: number;
+  effectiveScore?: number;
+  schedulingExplanation?: string;
 }

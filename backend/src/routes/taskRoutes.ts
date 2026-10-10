@@ -19,4 +19,9 @@ router.get('/queue', async (req, res) => {
   res.json(queue);
 });
 
+router.get('/metrics/costs', async (req, res) => {
+  const costs = await CloudServerClient.getCostMetrics();
+  res.json(costs);
+});
+
 export default router;

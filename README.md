@@ -115,10 +115,41 @@ Tasks have an `estimatedExecutionTime` (5 to 20 seconds). When a task starts, th
 - `POST /api/simulation/pause`: Pauses load generation.
 - `POST /api/simulation/stop`: Stops simulation and generation.
 
+## Cost-Aware Scheduling
+
+The system includes a cost-aware scheduling policy that balances computational urgency and priority against simulated cloud expenditure.
+
+### 1. Cost Estimation Formula
+Tasks estimate their dollar cost prior to allocation based on four resource dimensions and execution duration:
+$$\text{Execution Hours} = \frac{\text{estimatedExecutionTime (seconds)}}{3600}$$
+$$\text{CPU Cost} = \left(\frac{\text{cpuRequired}}{100}\right) \times \$0.034 \times \text{Execution Hours}$$
+$$\text{GPU Cost} = \left(\frac{\text{gpuRequired}}{100}\right) \times \$0.45 \times \text{Execution Hours}$$
+$$\text{RAM Cost} = \text{ramRequired (GB)} \times \$0.004 \times \text{Execution Hours}$$
+$$\text{Storage Cost} = \text{storageRequired (GB)} \times \$0.0001 \times \text{Execution Hours}$$
+$$\text{Estimated Total Cost (USD)} = \text{CPU Cost} + \text{GPU Cost} + \text{RAM Cost} + \text{Storage Cost}$$
+
+*Note: These pricing rates are illustrative simulation benchmarks for testing cost-aware algorithms and do not represent verified AWS invoices.*
+
+### 2. Queue Prioritization with Cost Penalty
+To optimize throughput without starving expensive or critical tasks, the scheduler applies a bounded cost penalty to the queue order:
+$$\text{Cost Penalty} = \min\left(\frac{\text{estimatedCostUsd}}{\$0.001}, 10.0\right)$$
+$$\text{Effective Score} = \text{Priority Score} + \text{Waiting Time Bonus} - \text{Cost Penalty}$$
+
+- **High Priority Preservation:** High-urgency/critical tasks retain enough base score to outrank cheaper low-priority tasks.
+- **Starvation Prevention:** The aging algorithm (+1 bonus point every 5 seconds waiting) continues to elevate older workloads.
+- **Deterministic FIFO:** Tasks with identical effective scores break ties by arrival timestamp (`createdAt`).
+
+### 3. Future Roadmap: Instance Types & AWS Billing Integration
+The current architecture models an aggregate compute pool. The modular `CostEngine` is structured so the next phase can introduce:
+- **Simulated Instance Flavors:** Bin-packing workloads onto discrete instance profiles (`Small`, `Medium`, `Large`, GPU instances).
+- **Live AWS Pricing API:** Ingesting AWS Price List API / EC2 Spot pricing in real time.
+- **Actual Execution Duration:** Integrating CloudWatch telemetry to reconcile estimated vs. actual execution duration.
+
 ## Screenshots
 *(Add screenshots here)*
 
 ## Future Improvements
+- Multi-worker instance-type selection (`Small`, `Medium`, `Large`).
 - Persistent Database (PostgreSQL/MongoDB) for analytics history.
 - Granular CPU core pinning algorithms.
 - Node fault-tolerance simulation.

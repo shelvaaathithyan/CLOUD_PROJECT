@@ -60,6 +60,17 @@ export class CloudServerClient {
     }
   }
 
+  public static async getCostMetrics() {
+    try {
+      const res = await fetch(`${CLOUD_SERVER_URL}/metrics/costs`);
+      if (!res.ok) throw new Error('Failed to get cost metrics');
+      return await res.json();
+    } catch (error) {
+      console.error('Error getting cost metrics:', error);
+      return null;
+    }
+  }
+
   public static async releaseTask(taskId: string) {
     try {
       const res = await fetch(`${CLOUD_SERVER_URL}/release/${taskId}`, {

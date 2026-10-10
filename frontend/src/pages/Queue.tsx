@@ -60,7 +60,19 @@ export default function Queue() {
                 <span className={styles.priority}>{task.priority}</span>
               </div>
               <div className={styles.scoreInfo}>
-                Base Score: <strong>{task.priorityScore}</strong> + Bonus: <strong>{task.waitingTimeBonus}</strong> = <span className={styles.totalScore}>{task.priorityScore + task.waitingTimeBonus}</span>
+                Base: <strong>{task.priorityScore}</strong> + Bonus: <strong>{task.waitingTimeBonus}</strong>
+                {task.costPenalty !== undefined && (
+                  <> - Penalty: <strong style={{ color: 'var(--accent-warning)' }}>{Number(task.costPenalty).toFixed(1)}</strong></>
+                )}
+                {' = '}
+                <span className={styles.totalScore}>
+                  {(task.effectiveScore ?? (task.priorityScore + task.waitingTimeBonus)).toFixed(1)}
+                </span>
+                {task.estimatedCostUsd !== undefined && (
+                  <span style={{ fontSize: '11px', color: 'var(--text-secondary)', marginLeft: '8px' }}>
+                    (${Number(task.estimatedCostUsd).toFixed(6)})
+                  </span>
+                )}
               </div>
             </div>
             
