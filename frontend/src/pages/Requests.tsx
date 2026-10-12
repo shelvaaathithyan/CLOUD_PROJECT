@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import styles from './Requests.module.css';
+import { formatCpu, formatMb } from '../utils/format';
 
 export default function Requests() {
   const [tasks, setTasks] = useState<any[]>([]);
@@ -41,7 +42,6 @@ export default function Requests() {
   // Robust extractor for task costs from authoritative backend fields with safe calculation fallback
   const getTaskCosts = (t: any) => {
     let cpuCost = t.cpuCostUsd ?? t.costBreakdown?.cpuCostUsd ?? t.costBreakdown?.cpuCost;
-    let gpuCost = t.gpuCostUsd ?? t.costBreakdown?.gpuCostUsd ?? t.costBreakdown?.gpuCost;
     let ramCost = t.ramCostUsd ?? t.costBreakdown?.ramCostUsd ?? t.costBreakdown?.ramCost;
     let storageCost = t.storageCostUsd ?? t.costBreakdown?.storageCostUsd ?? t.costBreakdown?.storageCost;
     let totalCost = t.estimatedCostUsd ?? t.costBreakdown?.total;
@@ -51,18 +51,16 @@ export default function Requests() {
       const execSeconds = Number(t.estimatedExecutionTime ?? 10);
       const execHours = (Number.isFinite(execSeconds) && execSeconds > 0 ? execSeconds : 10) / 3600;
       const cpu = Number(t.cpuRequired ?? 0);
-      const gpu = Number(t.gpuRequired ?? 0);
-      const ram = Number(t.ramRequired ?? 0);
-      const storage = Number(t.storageRequired ?? 0);
+      const ramGb = Number(t.ramRequired ?? 0) / 1024;
+      const storageGb = Number(t.storageRequired ?? 0) / 1024;
 
       cpuCost = (cpu / 100) * 0.034 * execHours;
-      gpuCost = (gpu / 100) * 0.45 * execHours;
-      ramCost = ram * 0.004 * execHours;
-      storageCost = storage * 0.0001 * execHours;
-      totalCost = cpuCost + gpuCost + ramCost + storageCost;
+      ramCost = ramGb * 0.004 * execHours;
+      storageCost = storageGb * 0.0001 * execHours;
+      totalCost = cpuCost + ramCost + storageCost;
     }
 
-    return { cpuCost, gpuCost, ramCost, storageCost, totalCost };
+    return { cpuCost, ramCost, storageCost, totalCost };
   };
 
   const formatCost = (cost?: number | null) => {
@@ -84,25 +82,31 @@ export default function Requests() {
     if (t.effectiveScore !== undefined && t.effectiveScore !== null && !Number.isNaN(Number(t.effectiveScore))) {
       return Number(t.effectiveScore).toFixed(2);
     }
-    const penalty = t.costPenalty !== undefined ? Number(t.costPenalty) : Math.min((totalCost ?? 0) / 0.001, 10);
+    const penalty = t.costPenalty !== undefined ? Number(t.costPenalty) : Math.min((totalCost ?? 0) / 0.00001, 10);
     const score = Number(t.priorityScore ?? 0);
     const bonus = Number(t.waitingTimeBonus ?? 0);
     return Math.max(0, score + bonus - penalty).toFixed(2);
   };
 
   const submitManualTask = async () => {
-    const types = ['CPU', 'GPU', 'MIXED'];
+    const between = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const types = ['CPU', 'MEMORY', 'MIXED'] as const;
     const type = types[Math.floor(Math.random() * types.length)];
-    
+    // Same profiles as the backend simulator; CPU in units (100 = 1 core), RAM/storage in MB
+    const profile = {
+      CPU: { cpu: [40, 90], ram: [32, 96] },
+      MEMORY: { cpu: [10, 30], ram: [192, 384] },
+      MIXED: { cpu: [30, 60], ram: [96, 192] },
+    }[type];
+
     const taskReq = {
       taskName: `Manual Task ${Math.floor(Math.random() * 1000)}`,
       taskType: type,
-      cpuRequired: Math.floor(Math.random() * 80) + 10,
-      gpuRequired: type === 'GPU' || type === 'MIXED' ? Math.floor(Math.random() * 90) + 10 : 0,
-      ramRequired: Math.floor(Math.random() * 8) + 1,
-      storageRequired: Math.floor(Math.random() * 50) + 5,
-      estimatedExecutionTime: Math.floor(Math.random() * 15) + 5,
-      urgency: Math.floor(Math.random() * 100)
+      cpuRequired: between(profile.cpu[0], profile.cpu[1]),
+      ramRequired: between(profile.ram[0], profile.ram[1]),
+      storageRequired: between(10, 100),
+      estimatedExecutionTime: between(5, 20),
+      urgency: between(0, 99)
     };
 
     await fetch('http://localhost:4000/api/tasks', {
@@ -129,8 +133,8 @@ export default function Requests() {
               <th>Priority</th>
               <th>Score</th>
               <th>CPU</th>
-              <th>GPU</th>
               <th>RAM</th>
+              <th>Node</th>
               <th>Est. Cost</th>
               <th>Status</th>
             </tr>
@@ -141,7 +145,7 @@ export default function Requests() {
               const costs = getTaskCosts(t);
               const costPenaltyVal = t.costPenalty !== undefined
                 ? Number(t.costPenalty)
-                : Math.min(costs.totalCost / 0.001, 10);
+                : Math.min(costs.totalCost / 0.00001, 10);
 
               return (
                 <>
@@ -156,9 +160,9 @@ export default function Requests() {
                     <td>{t.taskType}</td>
                     <td>{getPriorityBadge(t.priority)}</td>
                     <td>{t.priorityScore}</td>
-                    <td>{t.cpuRequired}%</td>
-                    <td>{t.gpuRequired}%</td>
-                    <td>{t.ramRequired} GB</td>
+                    <td>{formatCpu(t.cpuRequired)}</td>
+                    <td>{formatMb(t.ramRequired)}</td>
+                    <td className="mono">{t.nodeId ?? '—'}</td>
                     <td className={styles.costCell}>
                       {formatCost(costs.totalCost)}
                     </td>
@@ -187,10 +191,6 @@ export default function Requests() {
                               <div className={styles.breakdownVal}>{formatCost(costs.cpuCost)}</div>
                             </div>
                             <div className={styles.breakdownCard}>
-                              <div className={styles.breakdownLabel}>GPU Cost</div>
-                              <div className={styles.breakdownVal}>{formatCost(costs.gpuCost)}</div>
-                            </div>
-                            <div className={styles.breakdownCard}>
                               <div className={styles.breakdownLabel}>RAM Cost</div>
                               <div className={styles.breakdownVal}>{formatCost(costs.ramCost)}</div>
                             </div>
@@ -200,7 +200,10 @@ export default function Requests() {
                             </div>
                             <div className={styles.breakdownCard}>
                               <div className={styles.breakdownLabel}>Execution Time</div>
-                              <div className={styles.breakdownVal}>{t.estimatedExecutionTime ?? 10}s</div>
+                              <div className={styles.breakdownVal}>
+                                {t.estimatedExecutionTime ?? 10}s
+                                {t.actualDurationMs !== undefined && ` (actual ${(t.actualDurationMs / 1000).toFixed(1)}s)`}
+                              </div>
                             </div>
                             <div className={styles.breakdownCard}>
                               <div className={styles.breakdownLabel}>Cost Penalty</div>
@@ -215,6 +218,11 @@ export default function Requests() {
                               </div>
                             </div>
                           </div>
+                          {t.failureReason && (
+                            <div className={styles.breakdownNote} style={{ color: 'var(--accent-danger)' }}>
+                              Failed: {t.failureReason}
+                            </div>
+                          )}
                           <div className={styles.breakdownNote}>
                             {t.schedulingExplanation ||
                               `Base Priority: ${t.priorityScore}, Cost Penalty: ${formatPenalty(costPenaltyVal)}, Effective Score: ${formatEffectiveScore(t, costs.totalCost)} (Est. Cost: ${formatCost(costs.totalCost)})`}

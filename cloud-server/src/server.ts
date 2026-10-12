@@ -3,11 +3,11 @@ import cors from 'cors';
 import { createServer } from 'http';
 import cloudRoutes from './routes/cloudRoutes';
 import { SocketService } from './services/socketService';
-import { resourceManager } from './resources/resourceManager';
+import { NodeMonitor } from './services/nodeMonitor';
 
 const app = express();
 const httpServer = createServer(app);
-const PORT = 5000;
+const PORT = Number(process.env.PORT) || 5050;
 
 app.use(cors());
 app.use(express.json());
@@ -22,4 +22,5 @@ app.use(express.static(path.join(__dirname, '../public')));
 
 httpServer.listen(PORT, () => {
   console.log(`Cloud Server running on port ${PORT}`);
+  NodeMonitor.start();
 });

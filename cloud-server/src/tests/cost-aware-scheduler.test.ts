@@ -2,7 +2,7 @@ import { CostEngine } from '../engines/costEngine';
 import { QueueEngine } from '../engines/queueEngine';
 import { PriorityEngine } from '../engines/priorityEngine';
 import { AllocationEngine } from '../engines/allocationEngine';
-import { resourceManager } from '../resources/resourceManager';
+import { resourceManager, ResourceManager } from '../resources/resourceManager';
 import { CloudTask } from '../types';
 
 let totalTests = 0;
@@ -28,28 +28,32 @@ async function runAllTests() {
   CostEngine.resetToDefaults();
   QueueEngine.reset();
 
-  // Test 1: Task with zero GPU demand produces a valid cost estimate
+  // Tests run without real workers: register an in-memory node and stub the dispatcher.
+  resourceManager.registerNode('test-node', 'http://test-node.invalid', { cpu: 400, ramMb: 4096, storageMb: 4096 });
+  resourceManager.markOnline('test-node', null);
+  QueueEngine.dispatcher = async () => {};
+
+  // Test 1: Task with zero storage demand produces a valid cost estimate
   {
     const task: Partial<CloudTask> = {
       cpuRequired: 50,
-      gpuRequired: 0,
-      ramRequired: 8,
-      storageRequired: 100,
+      ramRequired: 256,
+      storageRequired: 0,
       estimatedExecutionTime: 10,
     };
     const cost = CostEngine.estimateTaskCost(task);
     const breakdown = CostEngine.getCostBreakdown(task);
     assert(
-      Number.isFinite(cost) && cost > 0 && breakdown.gpuCost === 0,
-      'Test 1: Zero GPU demand produces valid, non-negative cost estimate with 0 GPU charge',
-      `Cost: ${cost}, GpuCost: ${breakdown.gpuCost}`
+      Number.isFinite(cost) && cost > 0 && breakdown.storageCost === 0,
+      'Test 1: Zero storage demand produces valid, non-negative cost estimate with 0 storage charge',
+      `Cost: ${cost}, StorageCost: ${breakdown.storageCost}`
     );
   }
 
   // Test 2: Longer execution time increases estimated cost for the same workload
   {
-    const shortTask: Partial<CloudTask> = { cpuRequired: 40, gpuRequired: 20, ramRequired: 8, estimatedExecutionTime: 10 };
-    const longTask: Partial<CloudTask> = { cpuRequired: 40, gpuRequired: 20, ramRequired: 8, estimatedExecutionTime: 30 };
+    const shortTask: Partial<CloudTask> = { cpuRequired: 40, ramRequired: 256, estimatedExecutionTime: 10 };
+    const longTask: Partial<CloudTask> = { cpuRequired: 40, ramRequired: 256, estimatedExecutionTime: 30 };
     const costShort = CostEngine.estimateTaskCost(shortTask);
     const costLong = CostEngine.estimateTaskCost(longTask);
     assert(
@@ -72,24 +76,24 @@ async function runAllTests() {
     );
   }
 
-  // Test 4: Increasing GPU demand increases estimated GPU cost
+  // Test 4: Increasing RAM demand increases estimated RAM cost
   {
-    const lowGpu: Partial<CloudTask> = { gpuRequired: 10, estimatedExecutionTime: 10 };
-    const highGpu: Partial<CloudTask> = { gpuRequired: 50, estimatedExecutionTime: 10 };
-    const breakdownLow = CostEngine.getCostBreakdown(lowGpu);
-    const breakdownHigh = CostEngine.getCostBreakdown(highGpu);
+    const lowRam: Partial<CloudTask> = { ramRequired: 128, estimatedExecutionTime: 10 };
+    const highRam: Partial<CloudTask> = { ramRequired: 640, estimatedExecutionTime: 10 };
+    const breakdownLow = CostEngine.getCostBreakdown(lowRam);
+    const breakdownHigh = CostEngine.getCostBreakdown(highRam);
     assert(
-      breakdownHigh.gpuCost > breakdownLow.gpuCost && Math.abs(breakdownHigh.gpuCost - breakdownLow.gpuCost * 5) < 0.000001,
-      'Test 4: Increasing GPU demand increases estimated GPU cost proportionally',
-      `Low GPU cost: ${breakdownLow.gpuCost}, High GPU cost: ${breakdownHigh.gpuCost}`
+      breakdownHigh.ramCost > breakdownLow.ramCost && Math.abs(breakdownHigh.ramCost - breakdownLow.ramCost * 5) < 0.000001,
+      'Test 4: Increasing RAM demand increases estimated RAM cost proportionally',
+      `Low RAM cost: ${breakdownLow.ramCost}, High RAM cost: ${breakdownHigh.ramCost}`
     );
   }
 
   // Test 5: RAM and storage costs are calculated correctly
   {
-    // Rates: RAM = $0.004/GB-h, Storage = $0.0001/GB-h
+    // Rates: RAM = $0.004/GB-h, Storage = $0.0001/GB-h (requests are in MB)
     // Execution hours: 3600 seconds = 1 hour
-    const task: Partial<CloudTask> = { ramRequired: 16, storageRequired: 500, estimatedExecutionTime: 3600 };
+    const task: Partial<CloudTask> = { ramRequired: 16 * 1024, storageRequired: 500 * 1024, estimatedExecutionTime: 3600 };
     const breakdown = CostEngine.getCostBreakdown(task);
     const expectedRamCost = 16 * 0.004 * 1.0; // 0.064
     const expectedStorageCost = 500 * 0.0001 * 1.0; // 0.05
@@ -116,15 +120,16 @@ async function runAllTests() {
   // Test 7: Invalid negative or non-finite inputs are rejected at request boundary
   {
     const negativeCpu = CostEngine.validateTaskInputs({ cpuRequired: -10 });
-    const nonFiniteGpu = CostEngine.validateTaskInputs({ gpuRequired: NaN });
+    const nonFiniteStorage = CostEngine.validateTaskInputs({ storageRequired: NaN });
     const infiniteRam = CostEngine.validateTaskInputs({ ramRequired: Infinity });
     const excessiveStorage = CostEngine.validateTaskInputs({ storageRequired: 5000 });
-    const valid = CostEngine.validateTaskInputs({ cpuRequired: 50, gpuRequired: 10, ramRequired: 8 });
+    const gpuType = CostEngine.validateTaskInputs({ taskType: 'GPU' });
+    const valid = CostEngine.validateTaskInputs({ cpuRequired: 50, ramRequired: 256, taskType: 'MEMORY' });
 
     assert(
-      !negativeCpu.valid && !nonFiniteGpu.valid && !infiniteRam.valid && !excessiveStorage.valid && valid.valid,
-      'Test 7: Boundary validator rejects negative, non-finite, or excessive inputs and accepts valid inputs',
-      `neg: ${negativeCpu.valid}, nan: ${nonFiniteGpu.valid}, inf: ${infiniteRam.valid}, exc: ${excessiveStorage.valid}, val: ${valid.valid}`
+      !negativeCpu.valid && !nonFiniteStorage.valid && !infiniteRam.valid && !excessiveStorage.valid && !gpuType.valid && valid.valid,
+      'Test 7: Boundary validator rejects negative, non-finite, excessive or GPU inputs and accepts valid inputs',
+      `neg: ${negativeCpu.valid}, nan: ${nonFiniteStorage.valid}, inf: ${infiniteRam.valid}, exc: ${excessiveStorage.valid}, gpu: ${gpuType.valid}, val: ${valid.valid}`
     );
   }
 
@@ -135,13 +140,12 @@ async function runAllTests() {
     const taskHigh: CloudTask = {
       requestId: 'REQ-HIGH-01',
       taskName: 'Critical ML Task',
-      taskType: 'GPU',
+      taskType: 'MIXED',
       priority: 'HIGH',
       priorityScore: 90,
       suitabilityScore: 0,
       cpuRequired: 80,
-      gpuRequired: 90,
-      ramRequired: 16,
+      ramRequired: 1024,
       storageRequired: 100,
       estimatedExecutionTime: 20,
       urgency: 95,
@@ -161,8 +165,7 @@ async function runAllTests() {
       priorityScore: 30,
       suitabilityScore: 0,
       cpuRequired: 10,
-      gpuRequired: 0,
-      ramRequired: 2,
+      ramRequired: 128,
       storageRequired: 10,
       estimatedExecutionTime: 5,
       urgency: 10,
@@ -176,7 +179,7 @@ async function runAllTests() {
 
     QueueEngine.reset();
     QueueEngine.addTaskToQueue(taskLow, 'Insufficient CPU');
-    QueueEngine.addTaskToQueue(taskHigh, 'Insufficient GPU');
+    QueueEngine.addTaskToQueue(taskHigh, 'Insufficient RAM');
 
     assert(
       QueueEngine.queue[0].requestId === 'REQ-HIGH-01',
@@ -197,8 +200,7 @@ async function runAllTests() {
       priorityScore: 50,
       suitabilityScore: 0,
       cpuRequired: 50,
-      gpuRequired: 0,
-      ramRequired: 8,
+      ramRequired: 512,
       storageRequired: 50,
       estimatedExecutionTime: 10,
       urgency: 50,
@@ -217,8 +219,7 @@ async function runAllTests() {
       priorityScore: 42,
       suitabilityScore: 0,
       cpuRequired: 40,
-      gpuRequired: 0,
-      ramRequired: 8,
+      ramRequired: 512,
       storageRequired: 50,
       estimatedExecutionTime: 10,
       urgency: 40,
@@ -252,8 +253,7 @@ async function runAllTests() {
       priorityScore: 50,
       suitabilityScore: 0,
       cpuRequired: 40,
-      gpuRequired: 0,
-      ramRequired: 4,
+      ramRequired: 256,
       storageRequired: 20,
       estimatedExecutionTime: 10,
       urgency: 50,
@@ -272,8 +272,7 @@ async function runAllTests() {
       priorityScore: 50,
       suitabilityScore: 0,
       cpuRequired: 40,
-      gpuRequired: 0,
-      ramRequired: 4,
+      ramRequired: 256,
       storageRequired: 20,
       estimatedExecutionTime: 10,
       urgency: 50,
@@ -307,8 +306,7 @@ async function runAllTests() {
       priorityScore: 90,
       suitabilityScore: 0,
       cpuRequired: avail.cpuAvailable + 100, // Exceeds available
-      gpuRequired: 0,
-      ramRequired: 4,
+      ramRequired: 256,
       storageRequired: 20,
       estimatedExecutionTime: 10,
       urgency: 90,
@@ -336,8 +334,7 @@ async function runAllTests() {
       priorityScore: 50,
       suitabilityScore: 0,
       cpuRequired: 50,
-      gpuRequired: 0,
-      ramRequired: 4,
+      ramRequired: 256,
       storageRequired: 20,
       estimatedExecutionTime: 10,
       urgency: 50,
@@ -398,8 +395,7 @@ async function runAllTests() {
       priorityScore: 30,
       suitabilityScore: 0,
       cpuRequired: 20,
-      gpuRequired: 0,
-      ramRequired: 2,
+      ramRequired: 128,
       storageRequired: 10,
       estimatedExecutionTime: 5,
       urgency: 20,
@@ -411,13 +407,12 @@ async function runAllTests() {
     const taskB: CloudTask = {
       requestId: 'REQ-COUNT-2',
       taskName: 'Task 2',
-      taskType: 'GPU',
+      taskType: 'MEMORY',
       priority: 'HIGH',
       priorityScore: 80,
       suitabilityScore: 0,
       cpuRequired: 50,
-      gpuRequired: 50,
-      ramRequired: 8,
+      ramRequired: 512,
       storageRequired: 20,
       estimatedExecutionTime: 10,
       urgency: 80,
@@ -441,44 +436,41 @@ async function runAllTests() {
       poll1.totalEstimatedCompletedCost === 0.002 &&
       poll2.totalEstimatedCompletedCost === 0.002 &&
       poll1.costByType.CPU === 0.002 &&
-      poll1.costByType.GPU === 0.005,
+      poll1.costByType.MEMORY === 0.005,
       'Test 14: Authoritative cost metrics maintain consistent totals across polling snapshots without double-counting',
       `Poll1: ${poll1.totalEstimatedSubmittedCost}, Poll2: ${poll2.totalEstimatedSubmittedCost}`
     );
   }
 
-  // Test 15: CPU-only and GPU/MIXED tasks populate all 5 explicit cost breakdown fields
+  // Test 15: CPU and MEMORY tasks populate all 4 explicit cost breakdown fields
   {
     const cpuTask: Partial<CloudTask> = {
       taskType: 'CPU',
       cpuRequired: 50,
-      gpuRequired: 0,
-      ramRequired: 4,
+      ramRequired: 64,
       storageRequired: 20,
       estimatedExecutionTime: 12,
     };
-    const gpuTask: Partial<CloudTask> = {
-      taskType: 'GPU',
-      cpuRequired: 80,
-      gpuRequired: 60,
-      ramRequired: 16,
+    const memoryTask: Partial<CloudTask> = {
+      taskType: 'MEMORY',
+      cpuRequired: 20,
+      ramRequired: 384,
       storageRequired: 100,
       estimatedExecutionTime: 15,
     };
 
     const cpuBreakdown = CostEngine.getCostBreakdown(cpuTask);
-    const gpuBreakdown = CostEngine.getCostBreakdown(gpuTask);
+    const memoryBreakdown = CostEngine.getCostBreakdown(memoryTask);
 
     assert(
       cpuBreakdown.cpuCostUsd !== undefined &&
-      cpuBreakdown.gpuCostUsd === 0 &&
       cpuBreakdown.ramCostUsd !== undefined &&
       cpuBreakdown.storageCostUsd !== undefined &&
       cpuBreakdown.total > 0 &&
-      gpuBreakdown.gpuCostUsd! > 0 &&
-      Math.abs(gpuBreakdown.total - (gpuBreakdown.cpuCostUsd! + gpuBreakdown.gpuCostUsd! + gpuBreakdown.ramCostUsd! + gpuBreakdown.storageCostUsd!)) < 0.000001,
-      'Test 15: Both CPU-only and GPU/MIXED tasks populate all 5 explicit cost fields and sum accurately',
-      `CPU total: ${cpuBreakdown.total}, GPU total: ${gpuBreakdown.total}`
+      memoryBreakdown.ramCostUsd! > cpuBreakdown.ramCostUsd! &&
+      Math.abs(memoryBreakdown.total - (memoryBreakdown.cpuCostUsd! + memoryBreakdown.ramCostUsd! + memoryBreakdown.storageCostUsd!)) < 0.000001,
+      'Test 15: Both CPU and MEMORY tasks populate all 4 explicit cost fields and sum accurately',
+      `CPU total: ${cpuBreakdown.total}, MEMORY total: ${memoryBreakdown.total}`
     );
   }
 
@@ -493,8 +485,7 @@ async function runAllTests() {
       priorityScore: 55,
       suitabilityScore: 0,
       cpuRequired: 40,
-      gpuRequired: 20,
-      ramRequired: 8,
+      ramRequired: 512,
       storageRequired: 50,
       estimatedExecutionTime: 1, // 1 sec
       urgency: 50,
@@ -507,8 +498,8 @@ async function runAllTests() {
     QueueEngine.startTask(lifecycleTask);
     assert(
       lifecycleTask.status === 'RUNNING' &&
+      lifecycleTask.nodeId === 'test-node' &&
       lifecycleTask.cpuCostUsd !== undefined &&
-      lifecycleTask.gpuCostUsd !== undefined &&
       lifecycleTask.ramCostUsd !== undefined &&
       lifecycleTask.storageCostUsd !== undefined &&
       lifecycleTask.estimatedCostUsd !== undefined,
@@ -526,12 +517,11 @@ async function runAllTests() {
       completed.status === 'COMPLETED' &&
       completed.estimatedCostUsd !== undefined &&
       completed.cpuCostUsd !== undefined &&
-      completed.gpuCostUsd !== undefined &&
       completed.ramCostUsd !== undefined &&
       completed.storageCostUsd !== undefined &&
       inAll !== undefined &&
       inAll.status === 'COMPLETED',
-      'Test 16b: Completed task preserves all 5 cost breakdown fields without being cleared',
+      'Test 16b: Completed task preserves all 4 cost breakdown fields without being cleared',
       `Completed cost: ${completed?.estimatedCostUsd}`
     );
   }
@@ -540,7 +530,7 @@ async function runAllTests() {
   {
     const penaltyZero = CostEngine.calculateCostPenalty(0);
     const penaltyVerySmall = CostEngine.calculateCostPenalty(0.00000001);
-    const penaltyNormal = CostEngine.calculateCostPenalty(0.005);
+    const penaltyNormal = CostEngine.calculateCostPenalty(0.00005);
 
     const formatPenaltyCheck = (p: number) => {
       if (p <= 0.00001) return '0.00 pts';
@@ -555,6 +545,123 @@ async function runAllTests() {
       formatPenaltyCheck(penaltyNormal) === '-5.00 pts',
       'Test 17: Penalty calculation and formatting strictly prevents negative zero (-0.00 pts)',
       `Zero: ${formatPenaltyCheck(penaltyZero)}, Small: ${formatPenaltyCheck(penaltyVerySmall)}, Normal: ${formatPenaltyCheck(penaltyNormal)}`
+    );
+  }
+
+  // Test 18: Placement spreads load to the node left with the most free CPU
+  {
+    const rm = new ResourceManager();
+    rm.registerNode('small', 'http://small', { cpu: 100, ramMb: 512, storageMb: 1024 });
+    rm.registerNode('large', 'http://large', { cpu: 200, ramMb: 1024, storageMb: 2048 });
+    rm.markOnline('small', null);
+    rm.markOnline('large', null);
+
+    const first = rm.allocate({ taskId: 'T1', cpuRequired: 50, ramRequired: 128, storageRequired: 10 });
+    const second = rm.allocate({ taskId: 'T2', cpuRequired: 50, ramRequired: 128, storageRequired: 10 });
+    const tooBig = rm.allocate({ taskId: 'T3', cpuRequired: 250, ramRequired: 128, storageRequired: 10 });
+
+    assert(
+      first?.nodeId === 'large' && second?.nodeId === 'small' && tooBig === null,
+      'Test 18: Allocation spreads tasks across nodes and rejects tasks no single node can fit',
+      `T1: ${first?.nodeId}, T2: ${second?.nodeId}, T3: ${tooBig?.nodeId}`
+    );
+  }
+
+  // Test 19: Offline nodes are never chosen, and capacity is not split across nodes
+  {
+    const rm = new ResourceManager();
+    rm.registerNode('a', 'http://a', { cpu: 100, ramMb: 512, storageMb: 1024 });
+    rm.registerNode('b', 'http://b', { cpu: 100, ramMb: 512, storageMb: 1024 });
+    rm.markOnline('a', null);
+    rm.markOnline('b', null);
+    rm.markOffline('b');
+
+    const onOffline = rm.findNodeFor({ cpuRequired: 50, ramRequired: 64, storageRequired: 10 });
+    const needsBoth = rm.findNodeFor({ cpuRequired: 150, ramRequired: 64, storageRequired: 10 });
+    const totals = rm.getState();
+
+    assert(
+      onOffline?.id === 'a' && needsBoth === null && totals.cpu.total === 100,
+      'Test 19: Offline nodes are excluded from placement and cluster totals',
+      `Chosen: ${onOffline?.id}, needsBoth: ${needsBoth?.id}, total CPU: ${totals.cpu.total}`
+    );
+  }
+
+  // Test 20: A failed dispatch releases capacity and puts the task back in the queue
+  {
+    QueueEngine.reset();
+    const availBefore = resourceManager.getAvailableResources();
+    const task: CloudTask = {
+      requestId: 'REQ-DISPATCH-FAIL',
+      taskName: 'Dispatch Failure',
+      taskType: 'CPU',
+      priority: 'MEDIUM',
+      priorityScore: 50,
+      suitabilityScore: 0,
+      cpuRequired: 50,
+      ramRequired: 128,
+      storageRequired: 20,
+      estimatedExecutionTime: 10,
+      urgency: 50,
+      createdAt: Date.now(),
+      status: 'READY',
+      waitingTimeBonus: 0,
+    };
+
+    QueueEngine.dispatcher = async () => { throw new Error('connection refused'); };
+    AllocationEngine.allocateTask(task);
+    QueueEngine.startTask(task);
+    await new Promise(resolve => setImmediate(resolve));
+    QueueEngine.dispatcher = async () => {};
+    const availAfter = resourceManager.getAvailableResources();
+
+    assert(
+      task.status === 'WAITING' &&
+      QueueEngine.queue.some(t => t.requestId === 'REQ-DISPATCH-FAIL') &&
+      QueueEngine.runningTasks.length === 0 &&
+      availAfter.cpuAvailable === availBefore.cpuAvailable,
+      'Test 20: Failed dispatch releases capacity and re-queues the task',
+      `Status: ${task.status}, Reason: ${task.waitReason}, CPU before/after: ${availBefore.cpuAvailable}/${availAfter.cpuAvailable}`
+    );
+    QueueEngine.reset();
+  }
+
+  // Test 21: Tasks on a node that goes offline are failed and their capacity released
+  {
+    QueueEngine.reset();
+    const availBefore = resourceManager.getAvailableResources();
+    const task: CloudTask = {
+      requestId: 'REQ-NODE-LOST',
+      taskName: 'Node Lost',
+      taskType: 'MEMORY',
+      priority: 'MEDIUM',
+      priorityScore: 50,
+      suitabilityScore: 0,
+      cpuRequired: 20,
+      ramRequired: 256,
+      storageRequired: 20,
+      estimatedExecutionTime: 10,
+      urgency: 50,
+      createdAt: Date.now(),
+      status: 'READY',
+      waitingTimeBonus: 0,
+    };
+
+    AllocationEngine.allocateTask(task);
+    QueueEngine.startTask(task);
+    QueueEngine.failTasksOnNode('test-node', 'Worker test-node went offline');
+    // A late completion report from the worker must be ignored
+    QueueEngine.completeTask(task, 'COMPLETED');
+    const availAfter = resourceManager.getAvailableResources();
+
+    assert(
+      task.status === 'FAILED' &&
+      task.failureReason === 'Worker test-node went offline' &&
+      QueueEngine.failedTasks.length === 1 &&
+      QueueEngine.completedTasks.length === 0 &&
+      availAfter.ramAvailable === availBefore.ramAvailable,
+      'Test 21: Tasks on an offline node fail, release capacity, and ignore late completion reports',
+      `Status: ${task.status}, Failed: ${QueueEngine.failedTasks.length}, Completed: ${QueueEngine.completedTasks.length}`
     );
   }
 

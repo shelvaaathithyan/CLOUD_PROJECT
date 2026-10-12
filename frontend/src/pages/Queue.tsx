@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import styles from './Queue.module.css';
 import { socketService } from '../services/socketService';
+import { formatCpu, formatMb } from '../utils/format';
 
 export default function Queue() {
   const [queueStats, setQueueStats] = useState<any>(null);
@@ -82,7 +83,7 @@ export default function Queue() {
                 <span className={styles.reasonText}>Reason: {task.waitReason}</span>
               </div>
               <div className={styles.resourceBlock}>
-                Req: CPU {task.cpuRequired}% | GPU {task.gpuRequired}% | RAM {task.ramRequired}GB
+                Req: CPU {formatCpu(task.cpuRequired)} | RAM {formatMb(task.ramRequired)} | Disk {formatMb(task.storageRequired)}
               </div>
               <div className={styles.timeBlock}>
                 Waiting Time: {Math.floor((Date.now() - task.createdAt) / 1000)}s

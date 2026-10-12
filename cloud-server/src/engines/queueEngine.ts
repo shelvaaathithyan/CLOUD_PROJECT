@@ -3,6 +3,7 @@ import { AllocationEngine } from './allocationEngine';
 import { resourceManager } from '../resources/resourceManager';
 import { SocketService } from '../services/socketService';
 import { CostEngine } from './costEngine';
+import { WorkerClient } from '../services/workerClient';
 
 export class QueueEngine {
   public static queue: CloudTask[] = [];
@@ -16,7 +17,6 @@ export class QueueEngine {
       const breakdown = CostEngine.getCostBreakdown(task);
       task.estimatedCostUsd = breakdown.total;
       task.cpuCostUsd = breakdown.cpuCost;
-      task.gpuCostUsd = breakdown.gpuCost;
       task.ramCostUsd = breakdown.ramCost;
       task.storageCostUsd = breakdown.storageCost;
       task.costBreakdown = breakdown;
@@ -108,10 +108,26 @@ export class QueueEngine {
     }
   }
 
+  /**
+   * Sends a task to its worker node. Replaceable so tests can run without workers.
+   */
+  public static dispatcher: (task: CloudTask) => Promise<void> = async (task) => {
+    const node = resourceManager.getNode(task.nodeId!);
+    if (!node) throw new Error(`Unknown node ${task.nodeId}`);
+    await WorkerClient.runTask(node.url, {
+      taskId: task.requestId,
+      cpuUnits: task.cpuRequired,
+      ramMb: task.ramRequired,
+      storageMb: task.storageRequired,
+      durationSec: task.estimatedExecutionTime,
+    });
+  };
+
   public static startTask(task: CloudTask) {
     this.ensureTaskCost(task);
     task.status = 'RUNNING';
     task.startedAt = Date.now();
+    task.nodeId = task.allocations?.nodeId;
     this.runningTasks.push(task);
     if (!this.allTasks.find(t => t.requestId === task.requestId)) {
       this.allTasks.push(task);
@@ -120,21 +136,36 @@ export class QueueEngine {
     SocketService.emit('TASK_STARTED', task);
     SocketService.emit('RESOURCE_UPDATED', resourceManager.getState());
 
-    setTimeout(() => {
-      this.completeTask(task);
-    }, task.estimatedExecutionTime * 1000);
+    // The task completes when the worker reports back (POST /cloud/nodes/:nodeId/tasks/:taskId/complete).
+    this.dispatcher(task).catch(err => this.handleDispatchFailure(task, err));
   }
 
-  public static completeTask(task: CloudTask) {
+  private static handleDispatchFailure(task: CloudTask, err: Error) {
+    // Ignore if the task already finished or was failed by another path.
+    if (task.status !== 'RUNNING' || !this.runningTasks.includes(task)) return;
+    console.error(`Dispatch of ${task.requestId} to ${task.nodeId} failed:`, err.message);
+
+    resourceManager.release(task.requestId);
+    this.runningTasks = this.runningTasks.filter(t => t.requestId !== task.requestId);
+    task.startedAt = undefined;
+    task.nodeId = undefined;
+    task.allocations = undefined;
+    SocketService.emit('RESOURCE_UPDATED', resourceManager.getState());
+    this.addTaskToQueue(task, `Dispatch failed: ${err.message}`);
+  }
+
+  public static completeTask(task: CloudTask, outcome: 'COMPLETED' | 'FAILED' = 'COMPLETED', failureReason?: string) {
+    if (!this.runningTasks.includes(task)) return;
     this.ensureTaskCost(task);
-    const success = resourceManager.release(task.requestId);
-    if (success) {
+    const released = resourceManager.release(task.requestId);
+    task.completedAt = Date.now();
+    if (outcome === 'COMPLETED' && released) {
       task.status = 'COMPLETED';
-      task.completedAt = Date.now();
       this.completedTasks.push(task);
       SocketService.emit('TASK_COMPLETED', task);
     } else {
       task.status = 'FAILED';
+      task.failureReason = failureReason ?? (released ? undefined : 'Allocation not found on release');
       this.failedTasks.push(task);
       SocketService.emit('TASK_FAILED', task);
     }
@@ -143,6 +174,17 @@ export class QueueEngine {
     SocketService.emit('RESOURCE_UPDATED', resourceManager.getState());
     
     this.processQueue();
+  }
+
+  public static findRunningTask(taskId: string): CloudTask | undefined {
+    return this.runningTasks.find(t => t.requestId === taskId);
+  }
+
+  /** Fails every task running on a node (e.g. the node went offline). */
+  public static failTasksOnNode(nodeId: string, reason: string) {
+    for (const task of this.runningTasks.filter(t => t.nodeId === nodeId)) {
+      this.completeTask(task, 'FAILED', reason);
+    }
   }
 
   public static getQueueStats() {
@@ -169,7 +211,7 @@ export class QueueEngine {
 
     const costByType = {
       CPU: this.allTasks.filter(t => t.taskType === 'CPU').reduce((sum, t) => sum + (t.estimatedCostUsd ?? 0), 0),
-      GPU: this.allTasks.filter(t => t.taskType === 'GPU').reduce((sum, t) => sum + (t.estimatedCostUsd ?? 0), 0),
+      MEMORY: this.allTasks.filter(t => t.taskType === 'MEMORY').reduce((sum, t) => sum + (t.estimatedCostUsd ?? 0), 0),
       MIXED: this.allTasks.filter(t => t.taskType === 'MIXED').reduce((sum, t) => sum + (t.estimatedCostUsd ?? 0), 0),
     };
 
@@ -179,7 +221,7 @@ export class QueueEngine {
       averageCostPerCompletedTask: Number(avgCompletedCost.toFixed(6)),
       costByType: {
         CPU: Number(costByType.CPU.toFixed(6)),
-        GPU: Number(costByType.GPU.toFixed(6)),
+        MEMORY: Number(costByType.MEMORY.toFixed(6)),
         MIXED: Number(costByType.MIXED.toFixed(6)),
       },
       submittedCount: this.allTasks.length,
@@ -198,7 +240,7 @@ export class QueueEngine {
   }
 }
 
-// Start aging interval
+// Start aging interval (unref'd so it doesn't keep test processes alive)
 setInterval(() => {
   QueueEngine.updateAging();
-}, 1000);
+}, 1000).unref();

@@ -37,7 +37,6 @@ router.post('/request', (req, res) => {
     priorityScore: score,
     suitabilityScore: 0,
     cpuRequired: taskReq.cpuRequired ?? 0,
-    gpuRequired: taskReq.gpuRequired ?? 0,
     ramRequired: taskReq.ramRequired ?? 0,
     storageRequired: taskReq.storageRequired ?? 0,
     estimatedExecutionTime: taskReq.estimatedExecutionTime ?? 10,
@@ -47,7 +46,6 @@ router.post('/request', (req, res) => {
     waitingTimeBonus: 0,
     estimatedCostUsd,
     cpuCostUsd: costBreakdown.cpuCost,
-    gpuCostUsd: costBreakdown.gpuCost,
     ramCostUsd: costBreakdown.ramCost,
     storageCostUsd: costBreakdown.storageCost,
     costBreakdown,
@@ -73,10 +71,7 @@ router.post('/request', (req, res) => {
 });
 
 router.get('/resources', (req, res) => res.json(resourceManager.getState()));
-router.get('/resources/cpu', (req, res) => res.json(resourceManager.getState().cpu));
-router.get('/resources/gpu', (req, res) => res.json(resourceManager.getState().gpu));
-router.get('/resources/memory', (req, res) => res.json(resourceManager.getState().ram));
-router.get('/resources/storage', (req, res) => res.json(resourceManager.getState().storage));
+router.get('/resources/nodes', (req, res) => res.json(resourceManager.getState().nodes));
 
 router.get('/queue', (req, res) => res.json(QueueEngine.getQueueStats()));
 router.get('/tasks', (req, res) => res.json(QueueEngine.getAllTasks()));
@@ -86,9 +81,30 @@ router.get('/metrics/costs', (req, res) => res.json(QueueEngine.getCostMetrics()
 
 router.get('/status', (req, res) => res.json({ status: 'ONLINE', clusterId: 'CLS-99X' }));
 
+// Called by a worker node when a task it was running has finished.
+router.post('/nodes/:nodeId/tasks/:taskId/complete', (req, res) => {
+  const { nodeId, taskId } = req.params;
+  const task = QueueEngine.findRunningTask(taskId);
+  if (!task || task.nodeId !== nodeId) {
+    // Already handled (e.g. failed when the node went offline, or released manually).
+    res.json({ acknowledged: false });
+    return;
+  }
+  const { status, actualDurationMs, error } = req.body ?? {};
+  if (Number.isFinite(actualDurationMs)) task.actualDurationMs = actualDurationMs;
+  QueueEngine.completeTask(task, status === 'FAILED' ? 'FAILED' : 'COMPLETED', error);
+  res.json({ acknowledged: true });
+});
+
+// Stops tracking a running task and frees its reserved capacity.
 router.post('/release/:taskId', (req, res) => {
-  const success = resourceManager.release(req.params.taskId);
-  res.json({ success });
+  const task = QueueEngine.findRunningTask(req.params.taskId);
+  if (!task) {
+    res.json({ success: false });
+    return;
+  }
+  QueueEngine.completeTask(task, 'FAILED', 'Released manually');
+  res.json({ success: true });
 });
 
 export default router;

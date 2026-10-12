@@ -65,13 +65,12 @@ export class CostEngine {
   }
 
   /**
-   * Computes a structured breakdown of costs across CPU, GPU, RAM, and Storage.
+   * Computes a structured breakdown of costs across CPU, RAM, and Storage.
    *
    * Execution hours = estimatedExecutionTime (seconds) / 3600
    * CPU cost     = (cpuRequired / 100) × cpuRatePerHour × executionHours
-   * GPU cost     = (gpuRequired / 100) × gpuRatePerHour × executionHours
-   * RAM cost     = ramRequired × ramRatePerGbHour × executionHours
-   * Storage cost = storageRequired × storageRatePerGbHour × executionHours
+   * RAM cost     = (ramRequired MB / 1024) × ramRatePerGbHour × executionHours
+   * Storage cost = (storageRequired MB / 1024) × storageRatePerGbHour × executionHours
    *
    * @param task Partial task
    * @returns TaskCostBreakdown object with component costs and total
@@ -84,29 +83,23 @@ export class CostEngine {
     const rawCpu = Number(task.cpuRequired ?? 0);
     const cpu = Number.isFinite(rawCpu) && rawCpu >= 0 ? rawCpu : 0;
 
-    const rawGpu = Number(task.gpuRequired ?? 0);
-    const gpu = Number.isFinite(rawGpu) && rawGpu >= 0 ? rawGpu : 0;
-
     const rawRam = Number(task.ramRequired ?? 0);
-    const ram = Number.isFinite(rawRam) && rawRam >= 0 ? rawRam : 0;
+    const ramGb = (Number.isFinite(rawRam) && rawRam >= 0 ? rawRam : 0) / 1024;
 
     const rawStorage = Number(task.storageRequired ?? 0);
-    const storage = Number.isFinite(rawStorage) && rawStorage >= 0 ? rawStorage : 0;
+    const storageGb = (Number.isFinite(rawStorage) && rawStorage >= 0 ? rawStorage : 0) / 1024;
 
     const cpuCost = (cpu / 100) * this.rates.cpuRatePerHour * executionHours;
-    const gpuCost = (gpu / 100) * this.rates.gpuRatePerHour * executionHours;
-    const ramCost = ram * this.rates.ramRatePerGbHour * executionHours;
-    const storageCost = storage * this.rates.storageRatePerGbHour * executionHours;
+    const ramCost = ramGb * this.rates.ramRatePerGbHour * executionHours;
+    const storageCost = storageGb * this.rates.storageRatePerGbHour * executionHours;
 
-    const total = Math.max(0, cpuCost + gpuCost + ramCost + storageCost);
+    const total = Math.max(0, cpuCost + ramCost + storageCost);
 
     return {
       cpuCost: Math.max(0, cpuCost),
-      gpuCost: Math.max(0, gpuCost),
       ramCost: Math.max(0, ramCost),
       storageCost: Math.max(0, storageCost),
       cpuCostUsd: Math.max(0, cpuCost),
-      gpuCostUsd: Math.max(0, gpuCost),
       ramCostUsd: Math.max(0, ramCost),
       storageCostUsd: Math.max(0, storageCost),
       total,
@@ -119,7 +112,7 @@ export class CostEngine {
    * Penalty formula:
    *   costPenalty = min(estimatedCostUsd / costNormalizationUnit, maxCostPenalty)
    *
-   * Default: min(estimatedCostUsd / 0.001, 10.0)
+   * Default: min(estimatedCostUsd / 0.00001, 10.0)
    *
    * @param estimatedCostUsd Estimated cost of the task in USD
    * @returns Cost penalty points (between 0 and maxCostPenalty)
@@ -170,10 +163,9 @@ export class CostEngine {
       min: number;
       max: number;
     }> = [
-      { name: 'cpuRequired', value: req.cpuRequired, required: false, min: 0, max: 800 },
-      { name: 'gpuRequired', value: req.gpuRequired, required: false, min: 0, max: 200 },
-      { name: 'ramRequired', value: req.ramRequired, required: false, min: 0, max: 32 },
-      { name: 'storageRequired', value: req.storageRequired, required: false, min: 0, max: 1024 },
+      { name: 'cpuRequired', value: req.cpuRequired, required: false, min: 0, max: 400 },
+      { name: 'ramRequired', value: req.ramRequired, required: false, min: 0, max: 4096 },
+      { name: 'storageRequired', value: req.storageRequired, required: false, min: 0, max: 4096 },
       { name: 'estimatedExecutionTime', value: req.estimatedExecutionTime, required: false, min: 1, max: 86400 },
       { name: 'urgency', value: req.urgency, required: false, min: 0, max: 100 },
     ];
@@ -202,10 +194,10 @@ export class CostEngine {
     }
 
     if (req.taskType !== undefined && req.taskType !== null) {
-      if (!['CPU', 'GPU', 'MIXED'].includes(req.taskType)) {
+      if (!['CPU', 'MEMORY', 'MIXED'].includes(req.taskType)) {
         return {
           valid: false,
-          error: `Field 'taskType' must be one of: 'CPU', 'GPU', 'MIXED'. Received: ${req.taskType}`,
+          error: `Field 'taskType' must be one of: 'CPU', 'MEMORY', 'MIXED'. Received: ${req.taskType}`,
         };
       }
     }

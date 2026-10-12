@@ -1,156 +1,160 @@
-import { InfrastructureState, AllocationRequest, TaskAllocation, ResourceUnit } from '../types';
+import { InfrastructureState, AllocationRequest, TaskAllocation, WorkerNode, NodeResources, NodeUsage } from '../types';
 
+const emptyResources = (): NodeResources => ({ cpu: 0, ramMb: 0, storageMb: 0 });
+
+/**
+ * Tracks the worker nodes and what the scheduler has reserved on each.
+ *
+ * Placement uses reserved capacity (like Kubernetes resource requests), while
+ * `usage` holds the real CPU/RAM each worker measures and reports.
+ */
 export class ResourceManager {
-  private state: InfrastructureState;
+  private nodes: WorkerNode[] = [];
+  private activeAllocations: Map<string, TaskAllocation> = new Map();
 
-  constructor() {
-    this.state = {
-      cpu: Array.from({ length: 8 }).map((_, i) => ({
-        id: `CPU-${String(i + 1).padStart(2, '0')}`,
-        type: 'CPU',
-        capacity: 100,
-        allocated: 0,
-        tasks: [],
-        status: 'IDLE',
-      })),
-      gpu: Array.from({ length: 2 }).map((_, i) => ({
-        id: `GPU-${String(i + 1).padStart(2, '0')}`,
-        type: 'GPU',
-        capacity: 100,
-        allocated: 0,
-        tasks: [],
-        status: 'IDLE',
-      })),
-      ram: { total: 32, allocated: 0 },
-      storage: { total: 1024, allocated: 0 },
+  public registerNode(id: string, url: string, capacity: NodeResources): WorkerNode {
+    const existing = this.nodes.find(n => n.id === id);
+    if (existing) {
+      existing.url = url;
+      existing.capacity = { ...capacity };
+      return existing;
+    }
+    const node: WorkerNode = {
+      id,
+      url,
+      status: 'OFFLINE',
+      capacity: { ...capacity },
+      allocated: emptyResources(),
+      usage: null,
+      tasks: [],
+      lastSeen: null,
     };
+    this.nodes.push(node);
+    return node;
+  }
+
+  public getNode(id: string): WorkerNode | undefined {
+    return this.nodes.find(n => n.id === id);
+  }
+
+  public markOnline(id: string, usage: NodeUsage | null): void {
+    const node = this.getNode(id);
+    if (!node) return;
+    node.status = 'ONLINE';
+    node.usage = usage;
+    node.lastSeen = Date.now();
+  }
+
+  public markOffline(id: string): void {
+    const node = this.getNode(id);
+    if (!node) return;
+    node.status = 'OFFLINE';
+    node.usage = null;
   }
 
   public getState(): InfrastructureState {
-    return this.state;
-  }
-
-  public getAvailableResources() {
+    const online = this.nodes.filter(n => n.status === 'ONLINE');
+    const sum = (pick: (n: WorkerNode) => number) => online.reduce((s, n) => s + pick(n), 0);
     return {
-      cpuAvailable: this.state.cpu.reduce((sum, c) => sum + (c.capacity - c.allocated), 0),
-      gpuAvailable: this.state.gpu.reduce((sum, g) => sum + (g.capacity - g.allocated), 0),
-      ramAvailable: this.state.ram.total - this.state.ram.allocated,
-      storageAvailable: this.state.storage.total - this.state.storage.allocated,
+      nodes: this.nodes,
+      cpu: { total: sum(n => n.capacity.cpu), allocated: sum(n => n.allocated.cpu) },
+      ram: { total: sum(n => n.capacity.ramMb), allocated: sum(n => n.allocated.ramMb) },
+      storage: { total: sum(n => n.capacity.storageMb), allocated: sum(n => n.allocated.storageMb) },
     };
   }
 
-  public allocateResource(req: AllocationRequest): TaskAllocation | null {
-    const available = this.getAvailableResources();
-    if (
-      available.cpuAvailable < req.cpuRequired ||
-      available.gpuAvailable < req.gpuRequired ||
-      available.ramAvailable < req.ramRequired ||
-      available.storageAvailable < req.storageRequired
-    ) {
-      return null; // Not enough total resources
-    }
+  /** Free capacity on each ONLINE node. */
+  public getNodeAvailability(): Array<{ node: WorkerNode; free: NodeResources }> {
+    return this.nodes
+      .filter(n => n.status === 'ONLINE')
+      .map(node => ({
+        node,
+        free: {
+          cpu: node.capacity.cpu - node.allocated.cpu,
+          ramMb: node.capacity.ramMb - node.allocated.ramMb,
+          storageMb: node.capacity.storageMb - node.allocated.storageMb,
+        },
+      }));
+  }
 
-    const taskAllocation: TaskAllocation = {
-      taskId: req.taskId,
-      cpuAllocations: [],
-      gpuAllocations: [],
-      ramAllocated: req.ramRequired,
-      storageAllocated: req.storageRequired,
+  /** Cluster-wide free capacity across ONLINE nodes. */
+  public getAvailableResources() {
+    const availability = this.getNodeAvailability();
+    return {
+      cpuAvailable: availability.reduce((s, a) => s + a.free.cpu, 0),
+      ramAvailable: availability.reduce((s, a) => s + a.free.ramMb, 0),
+      storageAvailable: availability.reduce((s, a) => s + a.free.storageMb, 0),
     };
-
-    // Allocate CPU
-    let cpuRemaining = req.cpuRequired;
-    for (const c of this.state.cpu) {
-      if (cpuRemaining <= 0) break;
-      const cAvail = c.capacity - c.allocated;
-      if (cAvail > 0) {
-        const amountToTake = Math.min(cAvail, cpuRemaining);
-        c.allocated += amountToTake;
-        c.tasks.push({ taskId: req.taskId, allocation: amountToTake });
-        c.status = 'ACTIVE';
-        taskAllocation.cpuAllocations.push({ id: c.id, amount: amountToTake });
-        cpuRemaining -= amountToTake;
-      }
-    }
-
-    // Allocate GPU
-    let gpuRemaining = req.gpuRequired;
-    for (const g of this.state.gpu) {
-      if (gpuRemaining <= 0) break;
-      const gAvail = g.capacity - g.allocated;
-      if (gAvail > 0) {
-        const amountToTake = Math.min(gAvail, gpuRemaining);
-        g.allocated += amountToTake;
-        g.tasks.push({ taskId: req.taskId, allocation: amountToTake });
-        g.status = 'ACTIVE';
-        taskAllocation.gpuAllocations.push({ id: g.id, amount: amountToTake });
-        gpuRemaining -= amountToTake;
-      }
-    }
-
-    // Allocate RAM & Storage
-    this.state.ram.allocated += req.ramRequired;
-    this.state.storage.allocated += req.storageRequired;
-
-    return taskAllocation;
   }
 
-  public releaseResource(taskId: string): void {
-    // Release CPU
-    for (const c of this.state.cpu) {
-      const taskIndex = c.tasks.findIndex(t => t.taskId === taskId);
-      if (taskIndex !== -1) {
-        const t = c.tasks.splice(taskIndex, 1)[0];
-        c.allocated -= t.allocation;
-        if (c.allocated === 0) c.status = 'IDLE';
-      }
+  /**
+   * Picks the node for a request: among nodes that fit, the one left with the
+   * most free CPU (spreads load so every worker shares the work).
+   */
+  public findNodeFor(req: Omit<AllocationRequest, 'taskId'>): WorkerNode | null {
+    let best: { node: WorkerNode; cpuLeftRatio: number } | null = null;
+    for (const { node, free } of this.getNodeAvailability()) {
+      if (free.cpu < req.cpuRequired || free.ramMb < req.ramRequired || free.storageMb < req.storageRequired) continue;
+      const cpuLeftRatio = (free.cpu - req.cpuRequired) / node.capacity.cpu;
+      if (!best || cpuLeftRatio > best.cpuLeftRatio) best = { node, cpuLeftRatio };
     }
-    // Release GPU
-    for (const g of this.state.gpu) {
-      const taskIndex = g.tasks.findIndex(t => t.taskId === taskId);
-      if (taskIndex !== -1) {
-        const t = g.tasks.splice(taskIndex, 1)[0];
-        g.allocated -= t.allocation;
-        if (g.allocated === 0) g.status = 'IDLE';
-      }
-    }
-    
-    // We don't track which task took RAM/Storage exactly in `state.ram.tasks`, 
-    // but the backend handles it or we could track it here. 
-    // To be perfectly accurate, we should track it, but the mock cloud server 
-    // assumes the backend will tell us exactly how much to release or we track it.
-    // Let's modify so we track allocations internally.
+    return best?.node ?? null;
   }
-
-  // To properly release RAM and storage, we should track allocations in this class.
-  private activeAllocations: Map<string, TaskAllocation> = new Map();
 
   public allocate(req: AllocationRequest): TaskAllocation | null {
-    const alloc = this.allocateResource(req);
-    if (alloc) {
-      this.activeAllocations.set(req.taskId, alloc);
-    }
-    return alloc;
+    const node = this.findNodeFor(req);
+    if (!node) return null;
+
+    node.allocated.cpu += req.cpuRequired;
+    node.allocated.ramMb += req.ramRequired;
+    node.allocated.storageMb += req.storageRequired;
+    node.tasks.push(req.taskId);
+
+    const allocation: TaskAllocation = {
+      taskId: req.taskId,
+      nodeId: node.id,
+      cpu: req.cpuRequired,
+      ramMb: req.ramRequired,
+      storageMb: req.storageRequired,
+    };
+    this.activeAllocations.set(req.taskId, allocation);
+    return allocation;
   }
 
   public release(taskId: string): boolean {
     const alloc = this.activeAllocations.get(taskId);
     if (!alloc) return false;
 
-    this.releaseResource(taskId);
-    this.state.ram.allocated -= alloc.ramAllocated;
-    this.state.storage.allocated -= alloc.storageAllocated;
+    const node = this.getNode(alloc.nodeId);
+    if (node) {
+      node.allocated.cpu -= alloc.cpu;
+      node.allocated.ramMb -= alloc.ramMb;
+      node.allocated.storageMb -= alloc.storageMb;
+      node.tasks = node.tasks.filter(id => id !== taskId);
+    }
     this.activeAllocations.delete(taskId);
     return true;
   }
 
+  /** Reserved (scheduled) and measured (real) utilization percentages across ONLINE nodes. */
   public getUtilization() {
-    const available = this.getAvailableResources();
+    const state = this.getState();
+    const online = state.nodes.filter(n => n.status === 'ONLINE');
+    const pct = (part: number, total: number) => (total > 0 ? (part / total) * 100 : 0);
+
+    // Measured CPU: weight each node's % by its core count.
+    const measuredCpuUnits = online.reduce((s, n) => s + ((n.usage?.cpuPercent ?? 0) / 100) * n.capacity.cpu, 0);
+    const measuredRamMb = online.reduce((s, n) => s + (n.usage?.memoryUsedMb ?? 0), 0);
+    const ramLimitMb = online.reduce((s, n) => s + (n.usage?.memoryLimitMb ?? n.capacity.ramMb), 0);
+
     return {
-      cpu: (this.state.cpu.reduce((sum, c) => sum + c.allocated, 0) / (this.state.cpu.length * 100)) * 100,
-      gpu: (this.state.gpu.reduce((sum, g) => sum + g.allocated, 0) / (this.state.gpu.length * 100)) * 100,
-      ram: (this.state.ram.allocated / this.state.ram.total) * 100,
-      storage: (this.state.storage.allocated / this.state.storage.total) * 100,
+      cpu: pct(state.cpu.allocated, state.cpu.total),
+      ram: pct(state.ram.allocated, state.ram.total),
+      storage: pct(state.storage.allocated, state.storage.total),
+      measuredCpu: pct(measuredCpuUnits, state.cpu.total),
+      measuredRam: pct(measuredRamMb, ramLimitMb),
+      nodesOnline: online.length,
+      nodesTotal: state.nodes.length,
     };
   }
 }

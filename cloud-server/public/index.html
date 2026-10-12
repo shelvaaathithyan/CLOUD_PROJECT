@@ -33,25 +33,19 @@
         <div class="panel">
             <h2>INFRASTRUCTURE SUMMARY</h2>
             <div id="ram-summary">
-                <strong>RAM</strong> <span id="ram-text">0 / 32 GB</span>
+                <strong>RAM (reserved)</strong> <span id="ram-text">0 / 0 MB</span>
                 <div class="resource-bar"><div id="ram-fill" class="resource-fill" style="width: 0%;"></div></div>
             </div>
             <div id="storage-summary">
-                <strong>STORAGE</strong> <span id="storage-text">0 / 1000 GB</span>
+                <strong>STORAGE (reserved)</strong> <span id="storage-text">0 / 0 MB</span>
                 <div class="resource-bar"><div id="storage-fill" class="resource-fill" style="width: 0%;"></div></div>
             </div>
         </div>
     </div>
 
-    <div class="grid">
-        <div class="panel">
-            <h2>CPU POOL</h2>
-            <div id="cpu-pool"></div>
-        </div>
-        <div class="panel">
-            <h2>GPU POOL</h2>
-            <div id="gpu-pool"></div>
-        </div>
+    <div class="panel">
+        <h2>WORKER NODES</h2>
+        <div id="node-pool" class="grid"></div>
     </div>
 
     <div class="grid">
@@ -90,23 +84,20 @@
                 if (resourcesRes.ok) {
                     const res = await resourcesRes.json();
                     
-                    document.getElementById('ram-text').innerText = `${res.ram.allocated.toFixed(1)} / ${res.ram.total} GB`;
-                    document.getElementById('ram-fill').style.width = `${(res.ram.allocated / res.ram.total) * 100}%`;
+                    const pct = (a, t) => t > 0 ? (a / t) * 100 : 0;
+                    document.getElementById('ram-text').innerText = `${res.ram.allocated} / ${res.ram.total} MB`;
+                    document.getElementById('ram-fill').style.width = `${pct(res.ram.allocated, res.ram.total)}%`;
                     
-                    document.getElementById('storage-text').innerText = `${res.storage.allocated.toFixed(1)} / ${res.storage.total} GB`;
-                    document.getElementById('storage-fill').style.width = `${(res.storage.allocated / res.storage.total) * 100}%`;
+                    document.getElementById('storage-text').innerText = `${res.storage.allocated} / ${res.storage.total} MB`;
+                    document.getElementById('storage-fill').style.width = `${pct(res.storage.allocated, res.storage.total)}%`;
 
-                    document.getElementById('cpu-pool').innerHTML = res.cpu.map(c => `
+                    document.getElementById('node-pool').innerHTML = res.nodes.map(n => `
                         <div>
-                            <strong>${c.id}</strong> - ${c.status}
-                            <div class="resource-bar"><div class="resource-fill" style="width: ${c.allocated}%;"></div></div>
-                        </div>
-                    `).join('');
-
-                    document.getElementById('gpu-pool').innerHTML = res.gpu.map(g => `
-                        <div>
-                            <strong>${g.id}</strong> - ${g.status}
-                            <div class="resource-bar"><div class="resource-fill" style="width: ${g.allocated}%;"></div></div>
+                            <strong>${n.id}</strong> - ${n.status} (${n.tasks.length} tasks)
+                            <div>CPU ${n.usage ? n.usage.cpuPercent.toFixed(1) : '-'}% measured, ${n.allocated.cpu}/${n.capacity.cpu} units reserved</div>
+                            <div class="resource-bar"><div class="resource-fill" style="width: ${n.usage ? n.usage.cpuPercent : 0}%;"></div></div>
+                            <div>RAM ${n.usage ? `${n.usage.memoryUsedMb}/${n.usage.memoryLimitMb}` : '-'} MB measured, ${n.allocated.ramMb}/${n.capacity.ramMb} MB reserved</div>
+                            <div class="resource-bar"><div class="resource-fill" style="width: ${n.usage ? pct(n.usage.memoryUsedMb, n.usage.memoryLimitMb) : 0}%;"></div></div>
                         </div>
                     `).join('');
                 }

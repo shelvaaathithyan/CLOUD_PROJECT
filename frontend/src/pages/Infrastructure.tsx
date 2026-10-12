@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import styles from './Infrastructure.module.css';
+import { formatCpu, formatMb, formatPct } from '../utils/format';
+
+const pct = (part: number, total: number) => (total > 0 ? Math.min((part / total) * 100, 100) : 0);
 
 export default function Infrastructure() {
   const [resources, setResources] = useState<any>(null);
@@ -25,78 +28,83 @@ export default function Infrastructure() {
       <h1 className={styles.title}>Server Topology</h1>
 
       <section className={styles.section}>
-        <h2>CPU Cluster</h2>
+        <h2>Worker Nodes (Docker containers)</h2>
+        {resources.nodes.length === 0 && (
+          <div className="card">No worker nodes discovered yet. Start them with <span className="mono">docker compose up -d</span>.</div>
+        )}
         <div className={styles.resourceGrid}>
-          {resources.cpu.map((cpu: any) => (
-            <div key={cpu.id} className={`${styles.node} ${cpu.status === 'ACTIVE' ? styles.active : styles.idle}`}>
-              <div className={styles.nodeHeader}>
-                <span className={styles.nodeId}>{cpu.id}</span>
-                <span className={styles.nodeStatus}>{cpu.status}</span>
-              </div>
-              <div className={styles.nodeBody}>
-                <div className={styles.bar}>
-                  <div className={styles.fill} style={{ width: `${cpu.allocated}%` }} />
+          {resources.nodes.map((node: any) => {
+            const offline = node.status === 'OFFLINE';
+            const usage = node.usage;
+            const statusLabel = offline ? 'OFFLINE' : node.tasks.length > 0 ? 'ACTIVE' : 'IDLE';
+            const statusClass = offline ? styles.offline : node.tasks.length > 0 ? styles.active : styles.idle;
+            return (
+              <div key={node.id} className={`${styles.node} ${statusClass}`}>
+                <div className={styles.nodeHeader}>
+                  <span className={styles.nodeId}>{node.id}</span>
+                  <span className={styles.nodeStatus}>{statusLabel}</span>
                 </div>
-                <div className={styles.meta}>{cpu.allocated}% Allocated</div>
-                {cpu.tasks.length > 0 && (
-                  <div className={styles.taskIds}>
-                    {cpu.tasks.map((t: any) => <div key={t.taskId}>{t.taskId}</div>)}
+                <div className={styles.meta}>
+                  {formatCpu(node.capacity.cpu)} · {formatMb(node.capacity.ramMb)} RAM · {formatMb(node.capacity.storageMb)} disk
+                </div>
+                <div className={styles.nodeBody}>
+                  <div className={styles.metricLabel}>CPU (measured)</div>
+                  <div className={styles.bar}>
+                    <div className={styles.fill} style={{ width: `${usage?.cpuPercent ?? 0}%` }} />
                   </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+                  <div className={styles.meta}>
+                    {usage ? formatPct(usage.cpuPercent) : '—'} used · {formatCpu(node.allocated.cpu)} reserved
+                  </div>
 
-      <section className={styles.section}>
-        <h2>GPU Cluster</h2>
-        <div className={styles.resourceGrid}>
-          {resources.gpu.map((gpu: any) => (
-            <div key={gpu.id} className={`${styles.node} ${gpu.status === 'ACTIVE' ? styles.activeGpu : styles.idle}`}>
-              <div className={styles.nodeHeader}>
-                <span className={styles.nodeId}>{gpu.id}</span>
-                <span className={styles.nodeStatus}>{gpu.status}</span>
-              </div>
-              <div className={styles.nodeBody}>
-                <div className={styles.bar}>
-                  <div className={`${styles.fill} ${styles.fillGpu}`} style={{ width: `${gpu.allocated}%` }} />
-                </div>
-                <div className={styles.meta}>{gpu.allocated}% Allocated</div>
-                {gpu.tasks.length > 0 && (
-                  <div className={styles.taskIds}>
-                    {gpu.tasks.map((t: any) => <div key={t.taskId}>{t.taskId}</div>)}
+                  <div className={styles.metricLabel}>Memory (measured)</div>
+                  <div className={styles.bar}>
+                    <div className={`${styles.fill} ${styles.fillRam}`} style={{ width: `${usage ? pct(usage.memoryUsedMb, usage.memoryLimitMb) : 0}%` }} />
                   </div>
-                )}
+                  <div className={styles.meta}>
+                    {usage ? `${formatMb(usage.memoryUsedMb)} / ${formatMb(usage.memoryLimitMb)}` : '—'} · {formatMb(node.allocated.ramMb)} reserved
+                  </div>
+
+                  <div className={styles.metricLabel}>Disk (task files)</div>
+                  <div className={styles.bar}>
+                    <div className={`${styles.fill} ${styles.fillStorage}`} style={{ width: `${pct(node.allocated.storageMb, node.capacity.storageMb)}%` }} />
+                  </div>
+                  <div className={styles.meta}>{formatMb(usage?.storageUsedMb ?? node.allocated.storageMb)} written</div>
+
+                  {node.tasks.length > 0 && (
+                    <div className={styles.taskIds}>
+                      {node.tasks.map((taskId: string) => <div key={taskId}>{taskId}</div>)}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
       <div className={styles.row}>
         <section className={styles.section} style={{flex: 1}}>
-          <h2>Memory (RAM)</h2>
+          <h2>Cluster RAM (reserved)</h2>
           <div className="card">
             <div className={styles.memoryStats}>
-              <div>Total: <strong>{resources.ram.total} GB</strong></div>
-              <div>Allocated: <strong>{resources.ram.allocated.toFixed(1)} GB</strong></div>
+              <div>Total: <strong>{formatMb(resources.ram.total)}</strong></div>
+              <div>Reserved: <strong>{formatMb(resources.ram.allocated)}</strong></div>
             </div>
             <div className={styles.bar}>
-              <div className={`${styles.fill} ${styles.fillRam}`} style={{ width: `${(resources.ram.allocated / resources.ram.total) * 100}%` }} />
+              <div className={`${styles.fill} ${styles.fillRam}`} style={{ width: `${pct(resources.ram.allocated, resources.ram.total)}%` }} />
             </div>
           </div>
         </section>
 
         <section className={styles.section} style={{flex: 1}}>
-          <h2>Storage</h2>
+          <h2>Cluster Storage (reserved)</h2>
           <div className="card">
             <div className={styles.memoryStats}>
-              <div>Total: <strong>{resources.storage.total} GB</strong></div>
-              <div>Allocated: <strong>{resources.storage.allocated.toFixed(1)} GB</strong></div>
+              <div>Total: <strong>{formatMb(resources.storage.total)}</strong></div>
+              <div>Reserved: <strong>{formatMb(resources.storage.allocated)}</strong></div>
             </div>
             <div className={styles.bar}>
-              <div className={`${styles.fill} ${styles.fillStorage}`} style={{ width: `${(resources.storage.allocated / resources.storage.total) * 100}%` }} />
+              <div className={`${styles.fill} ${styles.fillStorage}`} style={{ width: `${pct(resources.storage.allocated, resources.storage.total)}%` }} />
             </div>
           </div>
         </section>

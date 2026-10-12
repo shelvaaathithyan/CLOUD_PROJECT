@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import styles from './AllocationEngine.module.css';
+import { formatCpu, formatMb } from '../utils/format';
 
 export default function AllocationEngine() {
   const [tasks, setTasks] = useState<any[]>([]);
@@ -28,13 +29,13 @@ export default function AllocationEngine() {
         <div className="card">
           <h3>Priority Score Formula</h3>
           <div className={styles.codeBlock}>
-            Score = (0.30 × CPU Req) + (0.30 × GPU Req) + (0.20 × RAM Req) + (0.20 × Urgency)
+            Score = (0.40 × CPU Req) + (0.30 × RAM Req) + (0.30 × Urgency)
           </div>
         </div>
         <div className="card">
           <h3>Suitability Score Formula</h3>
           <div className={styles.codeBlock}>
-            Suitability = Priority Score + (Resource Availability % × 0.5)
+            Suitability = Priority Score + (Chosen Node Free CPU/RAM % × 0.5)
           </div>
         </div>
       </div>
@@ -78,10 +79,10 @@ export default function AllocationEngine() {
             <div className={styles.evalBox}>
               <h4>Resource Requirements</h4>
               <ul className={styles.reqList}>
-                <li>CPU: {latestTask.cpuRequired}%</li>
-                <li>GPU: {latestTask.gpuRequired}%</li>
-                <li>RAM: {latestTask.ramRequired} GB</li>
-                <li>Storage: {latestTask.storageRequired} GB</li>
+                <li>CPU: {formatCpu(latestTask.cpuRequired)}</li>
+                <li>RAM: {formatMb(latestTask.ramRequired)}</li>
+                <li>Storage: {formatMb(latestTask.storageRequired)}</li>
+                <li>Node: {latestTask.nodeId ?? '—'}</li>
               </ul>
             </div>
           </div>

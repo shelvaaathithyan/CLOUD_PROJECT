@@ -22,7 +22,7 @@
 
 .resourceGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 16px;
 }
 
@@ -49,8 +49,9 @@
   border-left: 3px solid var(--accent-primary);
 }
 
-.activeGpu {
-  border-left: 3px solid #8b5cf6;
+.offline {
+  border-left: 3px solid var(--accent-danger);
+  opacity: 0.6;
 }
 
 .nodeHeader {
@@ -78,9 +79,9 @@
   color: var(--accent-primary);
 }
 
-.activeGpu .nodeStatus {
-  background-color: #ede9fe;
-  color: #8b5cf6;
+.offline .nodeStatus {
+  background-color: #fee2e2;
+  color: var(--accent-danger);
 }
 
 .nodeBody {
@@ -102,8 +103,12 @@
   transition: width 0.3s ease;
 }
 
-.fillGpu {
-  background-color: #8b5cf6;
+.metricLabel {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  margin-top: 4px;
 }
 
 .fillRam {

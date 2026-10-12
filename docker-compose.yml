@@ -1,0 +1,60 @@
+# Worker nodes for the Smart Cloud scheduler.
+# Each container acts as a small VM with a hard CPU and memory limit enforced by Docker.
+# CPU_UNITS / RAM_MB are what the node advertises to the scheduler; the Docker limits
+# match them, with ~160 MB of extra memory headroom for the Node.js runtime itself.
+#
+#   docker compose up --build -d     # start workers
+#   docker stats                     # watch real CPU / memory per worker
+
+x-worker: &worker
+  build: ./worker
+  restart: unless-stopped
+  environment: &worker-env
+    PORT: "7001"
+    SCHEDULER_URL: http://host.docker.internal:5050
+    DATA_DIR: /data
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  worker-1:
+    <<: *worker
+    container_name: worker-1
+    environment:
+      <<: *worker-env
+      NODE_ID: worker-1
+      CPU_UNITS: "100"
+      RAM_MB: "512"
+      STORAGE_MB: "1024"
+    cpus: 1.0
+    mem_limit: 672m
+    ports:
+      - "7001:7001"
+
+  worker-2:
+    <<: *worker
+    container_name: worker-2
+    environment:
+      <<: *worker-env
+      NODE_ID: worker-2
+      CPU_UNITS: "100"
+      RAM_MB: "512"
+      STORAGE_MB: "1024"
+    cpus: 1.0
+    mem_limit: 672m
+    ports:
+      - "7002:7001"
+
+  worker-3:
+    <<: *worker
+    container_name: worker-3
+    environment:
+      <<: *worker-env
+      NODE_ID: worker-3
+      CPU_UNITS: "200"
+      RAM_MB: "1024"
+      STORAGE_MB: "2048"
+    cpus: 2.0
+    mem_limit: 1184m
+    ports:
+      - "7003:7001"

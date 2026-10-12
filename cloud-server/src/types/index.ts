@@ -1,46 +1,63 @@
-export interface ResourceUnit {
+export interface NodeResources {
+  cpu: number;       // CPU units (100 = 1 core)
+  ramMb: number;
+  storageMb: number;
+}
+
+/** Real usage measured by the worker itself (cgroup stats inside Docker). */
+export interface NodeUsage {
+  cpuPercent: number;     // % of the node's CPU limit
+  memoryUsedMb: number;
+  memoryLimitMb: number;
+  storageUsedMb: number;
+  source: 'cgroup' | 'process';
+}
+
+export interface WorkerNode {
   id: string;
-  type: 'CPU' | 'GPU';
-  capacity: number; // e.0. 100 (%)
-  allocated: number; // 0 to 100
-  tasks: Array<{ taskId: string; allocation: number }>;
-  status: 'IDLE' | 'ACTIVE';
+  url: string;
+  status: 'ONLINE' | 'OFFLINE';
+  capacity: NodeResources;
+  allocated: NodeResources;   // reserved by the scheduler for running tasks
+  usage: NodeUsage | null;    // last measured usage, null until first report
+  tasks: string[];
+  lastSeen: number | null;
 }
 
 export interface InfrastructureState {
-  cpu: ResourceUnit[];
-  gpu: ResourceUnit[];
-  ram: { total: number; allocated: number }; // GB
-  storage: { total: number; allocated: number }; // GB
+  nodes: WorkerNode[];
+  // Cluster totals across ONLINE nodes
+  cpu: { total: number; allocated: number };       // CPU units
+  ram: { total: number; allocated: number };       // MB
+  storage: { total: number; allocated: number };   // MB
 }
 
 export interface AllocationRequest {
   taskId: string;
-  cpuRequired: number; // percentage (0-100)
-  gpuRequired: number; // percentage (0-100)
-  ramRequired: number; // GB
-  storageRequired: number; // GB
+  cpuRequired: number; // CPU units (100 = 1 core)
+  ramRequired: number; // MB
+  storageRequired: number; // MB
 }
 
 export interface TaskAllocation {
   taskId: string;
-  cpuAllocations: Array<{ id: string; amount: number }>;
-  gpuAllocations: Array<{ id: string; amount: number }>;
-  ramAllocated: number;
-  storageAllocated: number;
+  nodeId: string;
+  cpu: number;
+  ramMb: number;
+  storageMb: number;
 }
 
 export type TaskPriority = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export type TaskStatus = 'WAITING' | 'READY' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
+export type TaskType = 'CPU' | 'MEMORY' | 'MIXED';
+
 export interface TaskCostBreakdown {
   cpuCost: number;
-  gpuCost: number;
   ramCost: number;
   storageCost: number;
   cpuCostUsd?: number;
-  gpuCostUsd?: number;
   ramCostUsd?: number;
   storageCostUsd?: number;
   total: number;
@@ -50,11 +67,7 @@ export interface CostMetrics {
   totalEstimatedSubmittedCost: number;
   totalEstimatedCompletedCost: number;
   averageCostPerCompletedTask: number;
-  costByType: {
-    CPU: number;
-    GPU: number;
-    MIXED: number;
-  };
+  costByType: Record<TaskType, number>;
   submittedCount: number;
   completedCount: number;
   currency: string;
@@ -64,14 +77,13 @@ export interface CostMetrics {
 export interface CloudTask {
   requestId: string;
   taskName: string;
-  taskType: 'CPU' | 'GPU' | 'MIXED';
+  taskType: TaskType;
   priority: TaskPriority;
   priorityScore: number;
   suitabilityScore: number;
-  cpuRequired: number;
-  gpuRequired: number;
-  ramRequired: number;
-  storageRequired: number;
+  cpuRequired: number; // CPU units (100 = 1 core)
+  ramRequired: number; // MB
+  storageRequired: number; // MB
   estimatedExecutionTime: number; // in seconds
   urgency: number;
   createdAt: number;
@@ -80,10 +92,12 @@ export interface CloudTask {
   status: TaskStatus;
   waitingTimeBonus: number;
   waitReason?: string;
-  allocations?: any;
+  allocations?: TaskAllocation;
+  nodeId?: string;
+  actualDurationMs?: number;
+  failureReason?: string;
   estimatedCostUsd?: number;
   cpuCostUsd?: number;
-  gpuCostUsd?: number;
   ramCostUsd?: number;
   storageCostUsd?: number;
   costBreakdown?: TaskCostBreakdown;

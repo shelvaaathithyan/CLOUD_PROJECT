@@ -15,7 +15,7 @@ export class SocketService {
     });
 
     // 2. Setup Client to listen to Cloud Server
-    this.cloudClient = io('http://localhost:5000');
+    this.cloudClient = io(process.env.CLOUD_SERVER_ORIGIN || 'http://localhost:5050');
     
     this.cloudClient.on('connect', () => {
       console.log('Connected to Cloud Server');

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import styles from './Analytics.module.css';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Info, DollarSign, CheckCircle2, TrendingUp, Layers } from 'lucide-react';
+import { Info } from 'lucide-react';
 
 export default function Analytics() {
   const [data, setData] = useState<any[]>([]);
@@ -9,7 +9,7 @@ export default function Analytics() {
     totalEstimatedSubmittedCost: number;
     totalEstimatedCompletedCost: number;
     averageCostPerCompletedTask: number;
-    costByType: { CPU: number; GPU: number; MIXED: number };
+    costByType: { CPU: number; MEMORY: number; MIXED: number };
     submittedCount: number;
     completedCount: number;
     currency?: string;
@@ -17,7 +17,7 @@ export default function Analytics() {
     totalEstimatedSubmittedCost: 0,
     totalEstimatedCompletedCost: 0,
     averageCostPerCompletedTask: 0,
-    costByType: { CPU: 0, GPU: 0, MIXED: 0 },
+    costByType: { CPU: 0, MEMORY: 0, MIXED: 0 },
     submittedCount: 0,
     completedCount: 0,
   });
@@ -44,9 +44,10 @@ export default function Analytics() {
         setData(prev => {
           const newData = [...prev, {
             time: new Date().toLocaleTimeString(),
-            cpu: utilData?.cpu ?? 0,
-            gpu: utilData?.gpu ?? 0,
-            ram: utilData?.ram ?? 0,
+            cpu: utilData?.measuredCpu ?? 0,
+            cpuReserved: utilData?.cpu ?? 0,
+            ram: utilData?.measuredRam ?? 0,
+            ramReserved: utilData?.ram ?? 0,
             queueLength: queueData?.length ?? 0,
           }];
           if (newData.length > 20) newData.shift();
@@ -73,7 +74,7 @@ export default function Analytics() {
         <Info size={18} />
         <div>
           <strong>Simulation Cost Estimates Only:</strong> Cost values reflect illustrative simulation rates
-          (CPU: $0.034/100 units/h, GPU: $0.45/100 units/h, RAM: $0.004/GB-h, Storage: $0.0001/GB-h).
+          (CPU: $0.034/vCPU-h, RAM: $0.004/GB-h, Storage: $0.0001/GB-h).
           These do <em>not</em> represent real AWS charges and in-memory totals reset upon server restart.
         </div>
       </div>
@@ -113,7 +114,7 @@ export default function Analytics() {
           <div className={styles.kpiValue} style={{ fontSize: '16px', color: 'var(--text-secondary)' }}>
             Penalty: ≤ 10 pts
           </div>
-          <div className={styles.kpiSubtext}>Cost norm: $0.001 / penalty point</div>
+          <div className={styles.kpiSubtext}>Cost norm: $0.00001 / penalty point</div>
         </div>
       </div>
 
@@ -126,9 +127,9 @@ export default function Analytics() {
             <div className={styles.typeVal}>{formatCost(costMetrics.costByType?.CPU)}</div>
           </div>
           <div className={styles.typeBreakdownItem}>
-            <div className={styles.typeName}>⚡ GPU-Intensive Tasks</div>
-            <div className={styles.typeVal} style={{ color: '#8b5cf6' }}>
-              {formatCost(costMetrics.costByType?.GPU)}
+            <div className={styles.typeName}>🧠 Memory-Intensive Tasks</div>
+            <div className={styles.typeVal} style={{ color: 'var(--accent-success)' }}>
+              {formatCost(costMetrics.costByType?.MEMORY)}
             </div>
           </div>
           <div className={styles.typeBreakdownItem}>
@@ -143,30 +144,32 @@ export default function Analytics() {
       {/* Utilization Charts */}
       <div className={styles.grid}>
         <div className="card">
-          <h3 className={styles.chartTitle}>CPU Utilization (%)</h3>
+          <h3 className={styles.chartTitle}>CPU Utilization (%) — measured vs reserved</h3>
           <div className={styles.chartWrapper}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="time" hide />
                 <YAxis domain={[0, 100]} />
-                <Tooltip />
-                <Line type="monotone" dataKey="cpu" stroke="#2563eb" strokeWidth={2} dot={false} />
+                <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
+                <Line type="monotone" name="Measured" dataKey="cpu" stroke="#2563eb" strokeWidth={2} dot={false} />
+                <Line type="monotone" name="Reserved" dataKey="cpuReserved" stroke="#2563eb" strokeDasharray="4 4" strokeWidth={1} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         </div>
 
         <div className="card">
-          <h3 className={styles.chartTitle}>GPU Utilization (%)</h3>
+          <h3 className={styles.chartTitle}>RAM Utilization (%) — measured vs reserved</h3>
           <div className={styles.chartWrapper}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="time" hide />
                 <YAxis domain={[0, 100]} />
-                <Tooltip />
-                <Line type="monotone" dataKey="gpu" stroke="#8b5cf6" strokeWidth={2} dot={false} />
+                <Tooltip formatter={(v: any) => `${Number(v).toFixed(1)}%`} />
+                <Line type="monotone" name="Measured" dataKey="ram" stroke="#16a34a" strokeWidth={2} dot={false} />
+                <Line type="monotone" name="Reserved" dataKey="ramReserved" stroke="#16a34a" strokeDasharray="4 4" strokeWidth={1} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>

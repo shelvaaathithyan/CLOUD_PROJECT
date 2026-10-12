@@ -1,4 +1,4 @@
-const CLOUD_SERVER_URL = 'http://localhost:5000/cloud';
+const CLOUD_SERVER_URL = `${process.env.CLOUD_SERVER_ORIGIN || 'http://localhost:5050'}/cloud`;
 
 export class CloudServerClient {
   public static async requestResource(taskReq: any) {

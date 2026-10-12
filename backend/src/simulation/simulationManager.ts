@@ -54,27 +54,32 @@ export class SimulationManager {
   }
 
   private static async generateRequest() {
-    const types = ['CPU', 'GPU', 'MIXED'];
+    await CloudServerClient.requestResource(SimulationManager.randomTask('Auto Task'));
+  }
+
+  /**
+   * Random task sized for the worker nodes (100–200 CPU units, 512–1024 MB RAM each).
+   * CPU units: 100 = one full core. RAM and storage are in MB.
+   */
+  public static randomTask(namePrefix: string) {
+    const between = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+    const types = ['CPU', 'MEMORY', 'MIXED'] as const;
     const type = types[Math.floor(Math.random() * types.length)];
-    
-    const cpuRequired = Math.floor(Math.random() * 80) + 10;
-    const gpuRequired = type === 'GPU' || type === 'MIXED' ? Math.floor(Math.random() * 90) + 10 : 0;
-    const ramRequired = Math.floor(Math.random() * 8) + 1;
-    const storageRequired = Math.floor(Math.random() * 50) + 5;
-    const estimatedExecutionTime = Math.floor(Math.random() * 15) + 5;
-    const urgency = Math.floor(Math.random() * 100);
 
-    const taskReq = {
-      taskName: `Auto Task ${Math.floor(Math.random() * 1000)}`,
+    const profile = {
+      CPU: { cpu: [40, 90], ram: [32, 96] },
+      MEMORY: { cpu: [10, 30], ram: [192, 384] },
+      MIXED: { cpu: [30, 60], ram: [96, 192] },
+    }[type];
+
+    return {
+      taskName: `${namePrefix} ${Math.floor(Math.random() * 1000)}`,
       taskType: type,
-      cpuRequired,
-      gpuRequired,
-      ramRequired,
-      storageRequired,
-      estimatedExecutionTime,
-      urgency
+      cpuRequired: between(profile.cpu[0], profile.cpu[1]),
+      ramRequired: between(profile.ram[0], profile.ram[1]),
+      storageRequired: between(10, 100),
+      estimatedExecutionTime: between(5, 20),
+      urgency: between(0, 99),
     };
-
-    await CloudServerClient.requestResource(taskReq);
   }
 }
